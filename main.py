@@ -13,7 +13,11 @@ ROOT = Path(__file__).resolve().parent
 PLAY_TOP, PLAY_BOTTOM = 88, HEIGHT - 36
 ENEMY_SIZE = 58
 LIFE_ICON_SIZE = 42
+# スマホ対応用変数
+TOUCH_SHOOT_ZONE_X = WIDTH * 0.65
+TOUCH_MOVE_SPEED = 1.0
 
+# 初期化部
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Bell Blossom Formation Shooter")
@@ -21,7 +25,6 @@ clock = pygame.time.Clock()
 font = pygame.font.Font(None, 34)
 small_font = pygame.font.Font(None, 24)
 big_font = pygame.font.Font(None, 72)
-
 
 def load_scaled(filename, max_w, max_h):
     image = pygame.image.load(ROOT / filename).convert_alpha()
@@ -60,12 +63,14 @@ class Player:
             self.rect.y += int(dy / length * self.speed * dt)
 
         # Keep only the player's body hitbox inside the play area.
-        box = self.hitbox
-        if box.left < 0: self.rect.x -= box.left
-        elif box.right > WIDTH: self.rect.x -= box.right - WIDTH
-        box = self.hitbox
-        if box.top < PLAY_TOP: self.rect.y += PLAY_TOP - box.top
-        elif box.bottom > PLAY_BOTTOM: self.rect.y -= box.bottom - PLAY_BOTTOM
+        #box = self.hitbox
+        #if box.left < 0: self.rect.x -= box.left
+        #elif box.right > WIDTH: self.rect.x -= box.right - WIDTH
+        #box = self.hitbox
+        #if box.top < PLAY_TOP: self.rect.y += PLAY_TOP - box.top
+        #elif box.bottom > PLAY_BOTTOM: self.rect.y -= box.bottom - PLAY_BOTTOM
+        # 画面端処理の呼び出し
+        self.keep_inside_screen()
 
         self.shot_timer = max(0, self.shot_timer - dt)
         self.invuln = max(0, self.invuln - dt)
@@ -73,7 +78,22 @@ class Player:
     def draw(self):
         if self.invuln <= 0 or int(self.invuln * 12) % 2 == 0:
             screen.blit(self.image, self.rect)
+    
+    # 画面端補正用メソッド
+    def keep_inside_screen(self):
+        box = self.hitbox
 
+        if box.left < 0:
+            self.rect.x -= box.left
+        elif box.right > WIDTH:
+            self.rect.x -= box.right - WIDTH
+
+        box = self.hitbox
+
+        if box.top < PLAY_TOP:
+            self.rect.y += PLAY_TOP - box.top
+        elif box.bottom > PLAY_BOTTOM:
+            self.rect.y -= box.bottom - PLAY_BOTTOM
 
 class Bullet:
     def __init__(self, x, y):
@@ -173,7 +193,7 @@ def spawn_formation(level):
 def reset():
     return Player(), [], [], [], 0, 0.0, 0.4, False
 
-
+# Main関数
 async def main():
     (
         player,
@@ -186,11 +206,18 @@ async def main():
         game_over,
     ) = reset()
      
+     # スマホ対応用初期化部
+    touch_moving = False
+    touch_shooting = False
+    touch_target_x = 0
+    touch_target_y = 0
+
     running = True
     
     while running:
         dt = clock.tick(FPS) / 1000
         
+        # イベントループ
         for event in pygame.event.get():
             if event.type == pygame.QUIT: running = False
             elif event.type == pygame.KEYDOWN:
@@ -198,13 +225,72 @@ async def main():
                 elif game_over and event.key == pygame.K_r:
                     player, bullets, enemies, formations, score, elapsed, wave_timer, game_over = reset()
 
+            # スマホ操作用前処理
+            if event.type == pygame.FINGERDOWN:
+                touch_x = event.x * WIDTH
+                touch_y = event.y * HEIGHT
+
+                if touch_x < TOUCH_SHOOT_ZONE_X:
+                    touch_moving = True
+                    touch_target_x = touch_x
+                    touch_target_y = touch_y
+                else:
+                    touch_shooting = True
+            # フリップ時の処理
+            elif event.type == pygame.FINGERMOTION:
+                touch_x = event.x * WIDTH
+                touch_y = event.y * HEIGHT
+
+                if touch_x < TOUCH_SHOOT_ZONE_X:
+                    touch_moving = True
+                    touch_target_x = touch_x
+                    touch_target_y = touch_y
+            # 指を話した時の処理
+            elif event.type == pygame.FINGERUP:
+                touch_x = event.x * WIDTH
+
+                if touch_x < TOUCH_SHOOT_ZONE_X:
+                    touch_moving = False
+                else:
+                    touch_shooting = False
+
         keys = pygame.key.get_pressed()
         if not game_over:
             elapsed += dt
             level = 1 + score // 2000
+            # キーボード操作の座標移動処理
             player.update(dt, keys)
+            # スマホのタッチ操作の座標移動処理
+            if touch_moving:
+                target_x = int(touch_target_x)
+                target_y = int(touch_target_y)
 
-            if (keys[pygame.K_SPACE] or keys[pygame.K_z]) and player.shot_timer <= 0:
+                dx = target_x - player.hitbox.centerx
+                dy = target_y - player.hitbox.centery
+
+                distance = math.hypot(dx, dy)
+
+                if distance > 5:
+                    move_distance = min(
+                        player.speed * dt,
+                        distance,
+                    )
+
+                    player.rect.x += int(
+                        dx / distance * move_distance
+                    )
+
+                    player.rect.y += int(
+                        dy / distance * move_distance
+                    )
+
+                # 画面端チェック処理呼び出し
+                player.keep_inside_screen()
+
+            # キーボードでのショット処理
+            # if (keys[pygame.K_SPACE] or keys[pygame.K_z]) and player.shot_timer <= 0:
+            # スマホのショット処理追加版
+            if (keys[pygame.K_SPACE] or keys[pygame.K_z] or touch_shooting) and player.shot_timer <= 0:
                 bullets.append(Bullet(player.hitbox.right+60, player.hitbox.centery-80))
                 player.shot_timer = 0.16
 
@@ -246,6 +332,16 @@ async def main():
         pygame.draw.rect(screen,(190,64,112),(0,85,WIDTH,2))
         for b in bullets: b.draw()
         for e in enemies: e.draw()
+        
+        # スマホ操作用半透明ボタン
+        touch_layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA,)
+        pygame.draw.circle(touch_layer, (255, 255, 255, 45), (110, HEIGHT - 115), 75, 4, )
+        pygame.draw.circle(touch_layer, (255, 100, 160, 80), (WIDTH - 105, HEIGHT - 115), 68, )
+        
+        shoot_text = small_font.render("SHOT", True, (255, 255, 255), )
+        touch_layer.blit(shoot_text, shoot_text.get_rect(center=(WIDTH - 105, HEIGHT - 115, )),)
+        screen.blit(touch_layer, (0, 0))
+        
         # 現在の描画処理
         player.draw()
         screen.blit(font.render(f"SCORE  {score:06d}",True,(255,240,250)),(24,22))
@@ -262,6 +358,4 @@ async def main():
 
         # ブラウザーへ処理を戻す
         await asyncio.sleep(0)
-
-
 asyncio.run(main())
